@@ -4,17 +4,19 @@ from lxml import etree
 
 from merchant_gateways.billing.common import xmltodict, dicttoxml, ET, XMLDict
 
+import urllib2
+
 class Cybersource(Gateway):
     namespace = 'urn:schemas-cybersource-com:transaction-data-1.59'
-    
+
     TEST_URL = 'https://ics2wstest.ic3.com/commerce/1.x/transactionProcessor'
     LIVE_URL = 'https://ics2ws.ic3.com/commerce/1.x/transactionProcessor'
-    
+
     CREDIT_CARD_CODES = {'visa': '001',
                          'master': '002',
                          'american_express': '003',
                          'discover': '004',}
-    
+
     RESPONSE_CODES = {'100' : "Successful transaction",
         '101' : "Request is missing one or more required fields" ,
         '102' : "One or more fields contains invalid data",
@@ -53,7 +55,7 @@ class Cybersource(Gateway):
         '250' : "The request was received, but a time-out occurred with the payment processor",
         '254' : "Your CyberSource account is prohibited from processing stand-alone refunds",
         '255' : "Your CyberSource account is not configured to process the service in the country you specified", }
-    
+
     def __init__(self, merchant_id, api_key, **options):
         self.merchant_id = merchant_id
         self.api_key = api_key
@@ -62,26 +64,26 @@ class Cybersource(Gateway):
     def authorize(self, money, credit_card, **options):
         message = self.build_authorization_request(money, credit_card, **options)
         return self.commit(message)
-    
+
     def purchase(self, money, credit_card=None, card_store_id=None, **options):
         if card_store_id:
             assert False, 'TODO'
         else:
             message = self.build_authorization_request(money, credit_card, **options)
         return self.commit(message)
-    
+
     def void(self, authorization, **options):
         self.request = self.build_reversal_request(authorization, **options)
         return self.commit(self.request)
-    
+
     def credit(self, money, authorization, **options):
         request = self.build_credit_request(money, authorization, **options)
         return self.commit(request)
-    
+
     def capture(self, money, authorization, **options):
         request = self.build_capture_request(money, authorization, **options)
         return self.commit(request)
-    
+
     def parse_tokens(self, authorization):
         if ';' in authorization:
             request_id, request_token = authorization.split(';')[:2]
@@ -89,13 +91,13 @@ class Cybersource(Gateway):
             request_id, request_token = authorization, authorization
         return {'request_token':request_token,
                 'request_id':request_id,}
-    
+
     def get_cybersource_card_type(self, credit_card):
         return self.CREDIT_CARD_CODES.get(credit_card.card_type, '005') #TODO is this accurate?
-    
+
     def get_merchant_reference_code(self, options):
         return options.get('order_id', 'foo') #TODO should we raise en error instead?
-    
+
     def build_bill_to(self, credit_card, address):
         return XMLDict([('firstName', credit_card.first_name),
                         ('lastName', credit_card.last_name),
@@ -106,33 +108,57 @@ class Cybersource(Gateway):
                         ('postalCode', address['zip']),
                         ('country', address['country']),
                         ('phoneNumber', address.get('phone')),
-                        ('email', address.get('email', 'none@none.com')), #TODO test server complains if there is no email
+                        ('email', address.get('email', 'none@none.com')),  # TODO: test server complains if there is no email
+                        ('ipAddress', address.get('ipaddress')),
                         ])
-    
+
     def build_card(self, credit_card):
         return XMLDict([('accountNumber', credit_card.number),
                         ('expirationMonth', credit_card.month),
                         ('expirationYear', credit_card.year),
                         ('cvNumber', credit_card.verification_value),
-                        # ('cardType', self.get_cybersource_card_type(credit_card)), 
+                        # ('cardType', self.get_cybersource_card_type(credit_card)),
                         # TODO - fix the value we get from the get_cybersource_card_type call - it is always returing '005', which is "Diner's Club."
                         # I am commenting it out for now, because it's optional for all card types; except for JCB, which we don't accept.
                        ])
-    
+
     def build_business_rules(self, options):
         parts = list()
         def check_options(key):
             if options.get(key, False):
                 parts.append((key, options[key]))
-        
+
         for option in ['ignoreAVSResult', 'ignoreCVResult', 'ignoreDAVResult', 'ignoreExportResult', 'ignoreValidateResult', 'declineAVSFlags', 'scoreThreshold']:
             check_options(option)
         if parts:
             return XMLDict(parts)
-    
+
     def build_grand_total(self, money):
         return XMLDict([('currency', money.currency.code),
                         ('grandTotalAmount', money.amount),])
+
+    def buld_afs_request(self, money, credit_card, **options):
+        """
+        Build an AFS only request. This deals directly with only
+        the anti-fraud system rather than the full auth. process
+        """
+        entries = XMLDict([('merchantID', self.merchant_id),
+                           ('merchantReferenceCode',
+                               self.get_merchant_reference_code(options))])
+
+        if 'address' in options:
+            entries['billTo'] = self.build_bill_to(credit_card,
+                    options['address'])
+
+        entries['item'] = XMLDict({'unitPrice': 100, 'quantity': 1},
+                attrib={'id': '0'})
+        entries['purchaseTotals'] = self.build_grand_total(money)
+        entries['card'] = self.build_card(credit_card)
+        entries['afsService'] = XMLDict(attrib={'run': 'true'})
+        business_rules = self.build_business_rules(options)
+        if business_rules:
+            entries['businessRules'] = business_rules
+        return self.build_soap(entries)
 
     def build_authorization_request(self, money, credit_card, **options):
         entries = XMLDict([('merchantID', self.merchant_id),
@@ -146,20 +172,20 @@ class Cybersource(Gateway):
         if business_rules:
             entries['businessRules'] = business_rules
         return self.build_soap(entries)
-    
+
     def build_capture_request(self, money, authorization, **options):
         entries = XMLDict([('merchantID', self.merchant_id),
                            ('merchantReferenceCode', self.get_merchant_reference_code(options)),])
         entries['purchaseTotals'] = self.build_grand_total(money)
         tokens = self.parse_tokens(authorization)
         entries['orderRequestToken'] = tokens['request_token']
-        entries['ccCaptureService'] = XMLDict([('authRequestID', tokens['request_id'])], 
+        entries['ccCaptureService'] = XMLDict([('authRequestID', tokens['request_id'])],
                                               attrib={'run':'true'})
         business_rules = self.build_business_rules(options)
         if business_rules:
             entries['businessRules'] = business_rules
         return self.build_soap(entries)
-    
+
     def build_purchase_request(self, money, credit_card, **options):
         entries = XMLDict([('merchantID', self.merchant_id),
                            ('merchantReferenceCode', self.get_merchant_reference_code(options)),])
@@ -173,7 +199,7 @@ class Cybersource(Gateway):
         if business_rules:
             entries['businessRules'] = business_rules
         return self.build_soap(entries)
-    
+
     def build_reversal_request(self, authorization, **options):
         entries = XMLDict([('merchantID', self.merchant_id),
                            ('merchantReferenceCode', self.get_merchant_reference_code(options)),])
@@ -185,13 +211,13 @@ class Cybersource(Gateway):
                                                  ('grandTotalAmount', 100),])
         tokens = self.parse_tokens(authorization)
         entries['orderRequestToken'] = tokens['request_token']
-        entries['ccAuthReversalService'] = XMLDict([('authRequestID', tokens['request_id'])], 
+        entries['ccAuthReversalService'] = XMLDict([('authRequestID', tokens['request_id'])],
                                               attrib={'run':'true'})
         business_rules = self.build_business_rules(options)
         if business_rules:
             entries['businessRules'] = business_rules
         return self.build_soap(entries)
-    
+
     def build_credit_request(self, money, authorization, **options):
         entries = XMLDict([('merchantID', self.merchant_id),
                            ('merchantReferenceCode', self.get_merchant_reference_code(options)),])
@@ -202,13 +228,13 @@ class Cybersource(Gateway):
             entries['card'] = self.build_card(options['credit_card'])
         tokens = self.parse_tokens(authorization)
         entries['orderRequestToken'] = tokens['request_token']
-        entries['ccCreditService'] = XMLDict([('captureRequestID', tokens['request_id'])], 
+        entries['ccCreditService'] = XMLDict([('captureRequestID', tokens['request_id'])],
                                              attrib={'run':'true'})
         business_rules = self.build_business_rules(options)
         if business_rules:
             entries['businessRules'] = business_rules
         return self.build_soap(entries)
-    
+
     def build_soap(self, xml_dict):
         #TODO build this up properly
         soap_payload = '''<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
@@ -234,6 +260,7 @@ class Cybersource(Gateway):
                                'body': body,}
 
     def parse(self, response):
+        print response
         doc  = etree.XML(response)
         result = xmltodict(doc, strip_namespaces=True)
         if 'Body' in result:
@@ -251,17 +278,22 @@ class Cybersource(Gateway):
     def commit(self, request, **options):
         url = self.is_test and self.TEST_URL or self.LIVE_URL
 
-        result = self.parse(self.post_webservice(url, request, {}))
-        
-        authorization = ';'.join([result['requestID'], result['requestToken']])
-        
-        message = self.RESPONSE_CODES.get(result['reasonCode'], 'Response code: %s' % result['reasonCode'])
-        
-        response = Cybersource.Response( success=result['decision'] == 'ACCEPT', 
-                                         message=message,
-                                         result=result,
-                                         is_test=self.is_test,
-                                         authorization=authorization,
-                                         transaction=authorization,)
-        return response
+        try:
+            result = self.parse(self.post_webservice(url, request, {}))
+
+            authorization = ';'.join([result['requestID'], result['requestToken']])
+
+            message = self.RESPONSE_CODES.get(result['reasonCode'], 'Response code: %s' % result['reasonCode'])
+
+            response = Cybersource.Response( success=result['decision'] == 'ACCEPT',
+                                             message=message,
+                                             result=result,
+                                             is_test=self.is_test,
+                                             authorization=authorization,
+                                             transaction=authorization,)
+            return response
+        except urllib2.HTTPError, error:
+            print error.read()
+
+        return ""
 
