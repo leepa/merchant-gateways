@@ -99,8 +99,16 @@ class Cybersource(Gateway):
         return options.get('order_id', 'foo') #TODO should we raise en error instead?
 
     def build_bill_to(self, credit_card, address):
-        return XMLDict([('firstName', credit_card.first_name),
-                        ('lastName', credit_card.last_name),
+
+        if credit_card:
+            first_name = credit_card.first_name
+            last_name = credit_card.last_name
+        else:
+            first_name = address.get('first_name')
+            last_name = address.get('last_name')
+
+        return XMLDict([('firstName', first_name),
+                        ('lastName', last_name),
                         ('street1', address['address1']),
                         ('street2', address.get('address2','')),
                         ('city', address['city']),
@@ -137,7 +145,7 @@ class Cybersource(Gateway):
         return XMLDict([('currency', money.currency.code),
                         ('grandTotalAmount', money.amount),])
 
-    def buld_afs_request(self, money, credit_card, **options):
+    def build_afs_request(self, money, credit_card, **options):
         """
         Build an AFS only request. This deals directly with only
         the anti-fraud system rather than the full auth. process
@@ -153,7 +161,10 @@ class Cybersource(Gateway):
         entries['item'] = XMLDict({'unitPrice': 100, 'quantity': 1},
                 attrib={'id': '0'})
         entries['purchaseTotals'] = self.build_grand_total(money)
-        entries['card'] = self.build_card(credit_card)
+
+        if credit_card:
+            entries['card'] = self.build_card(credit_card)
+
         entries['afsService'] = XMLDict(attrib={'run': 'true'})
         business_rules = self.build_business_rules(options)
         if business_rules:
@@ -296,4 +307,3 @@ class Cybersource(Gateway):
             print error.read()
 
         return ""
-

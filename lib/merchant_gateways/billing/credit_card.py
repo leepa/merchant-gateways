@@ -278,4 +278,3 @@ CARD_COMPANIES = {
     'forbrugsforeningen': '^600722\d{10}$',
     'laser': '^(6304[89]\d{11}(\d{2,3})?|670695\d{13})$'
 }
-
