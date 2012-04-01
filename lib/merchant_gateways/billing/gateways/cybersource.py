@@ -172,7 +172,7 @@ class Cybersource(Gateway):
         # merchantDefinedData is a [] and should be in the order you
         # want it sorted in the field0-20. If it's longer than 20,
         # CyberSource will probably reject it.
-        if 'merchantDefinedData' in options:
+        if options.get('merchantDefinedData'):
             entries['merchantDefinedData'] = XMLDict()
             field = 1
             for v in options['merchantDefinedData']:
@@ -186,7 +186,7 @@ class Cybersource(Gateway):
 
         # Used for device fingerprinting - you should read the
         # documentation about what to put here. It's under NDA.
-        if 'session_id' in options:
+        if options.get('session_id'):
             entries['deviceFingerprintID'] = options['session_id']
 
         return self.build_soap(entries)
