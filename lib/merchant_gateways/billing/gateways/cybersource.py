@@ -143,7 +143,7 @@ class Cybersource(Gateway):
 
     def build_grand_total(self, money):
         return XMLDict([('currency', money.currency.code),
-                        ('grandTotalAmount', money.amount),])
+                        ('grandTotalAmount', money.amount)])
 
     def build_afs_request(self, money, credit_card, **options):
         """
@@ -158,17 +158,37 @@ class Cybersource(Gateway):
             entries['billTo'] = self.build_bill_to(credit_card,
                     options['address'])
 
-        entries['item'] = XMLDict({'unitPrice': 100, 'quantity': 1},
-                attrib={'id': '0'})
+        entries['item'] = XMLDict({'unitPrice': str(money.amount),
+            'quantity': 1},
+            attrib={'id': '0'})
+        entries['item']['productName'] = options.get('description', '')
+        entries['item']['totalAmount'] = str(money.amount)
         entries['purchaseTotals'] = self.build_grand_total(money)
+        entries['fundingTotals'] = self.build_grand_total(money)
 
         if credit_card:
             entries['card'] = self.build_card(credit_card)
+
+        # merchantDefinedData is a [] and should be in the order you
+        # want it sorted in the field0-20. If it's longer than 20,
+        # CyberSource will probably reject it.
+        if 'merchantDefinedData' in options:
+            entries['merchantDefinedData'] = XMLDict()
+            field = 1
+            for v in options['merchantDefinedData']:
+                entries['merchantDefinedData']['field%d' % field] = v
+                field += 1
 
         entries['afsService'] = XMLDict(attrib={'run': 'true'})
         business_rules = self.build_business_rules(options)
         if business_rules:
             entries['businessRules'] = business_rules
+
+        # Used for device fingerprinting - you should read the
+        # documentation about what to put here. It's under NDA.
+        if 'session_id' in options:
+            entries['deviceFingerprintID'] = options['session_id']
+
         return self.build_soap(entries)
 
     def build_authorization_request(self, money, credit_card, **options):
@@ -306,4 +326,4 @@ class Cybersource(Gateway):
         except urllib2.HTTPError, error:
             print error.read()
 
-        return ""
+        return None
