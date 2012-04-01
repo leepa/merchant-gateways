@@ -291,7 +291,6 @@ class Cybersource(Gateway):
                                'body': body,}
 
     def parse(self, response):
-        print response
         doc  = etree.XML(response)
         result = xmltodict(doc, strip_namespaces=True)
         if 'Body' in result:
