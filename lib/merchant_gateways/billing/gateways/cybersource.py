@@ -158,11 +158,21 @@ class Cybersource(Gateway):
             entries['billTo'] = self.build_bill_to(credit_card,
                     options['address'])
 
-        entries['item'] = XMLDict({'unitPrice': str(money.amount),
-            'quantity': 1},
-            attrib={'id': '0'})
-        entries['item']['productName'] = options.get('description', '')
-        entries['item']['totalAmount'] = str(money.amount)
+        if 'basket_items' in options and len(options['basket_items']):
+            for item in options['basket_items']:
+                entry = XMLDict({'unitPrice': str(item['amount']),
+                                 'quantity': str(item['quantity']),
+                                 'productName': item['description'],
+                                 'totalAmount': str(item['totalAmount'])},
+                    attrib={'id': str(item['id'])})
+                entries.appendlist('item', entry)
+        else:
+            entries['item'] = XMLDict({'unitPrice': str(money.amount),
+                'quantity': 1},
+                attrib={'id': '0'})
+            entries['item']['productName'] = options.get('description', '')
+            entries['item']['totalAmount'] = str(money.amount)
+
         entries['purchaseTotals'] = self.build_grand_total(money)
         entries['fundingTotals'] = self.build_grand_total(money)
 
