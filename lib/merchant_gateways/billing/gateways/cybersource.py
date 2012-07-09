@@ -161,10 +161,10 @@ class Cybersource(Gateway):
         if 'basket_items' in options and len(options['basket_items']):
             for item in options['basket_items']:
                 entry = XMLDict({'unitPrice': str(item['amount']),
-                                 'quantity': str(item['quantity']),
-                                 'productName': item['description'],
-                                 'totalAmount': str(item['totalAmount'])},
+                                 'quantity': str(item['quantity'])},
                     attrib={'id': str(item['id'])})
+                entry['productName'] = item['description']
+                entry['totalAmount'] = str(item['totalAmount'])
                 entries.appendlist('item', entry)
         else:
             entries['item'] = XMLDict({'unitPrice': str(money.amount),
